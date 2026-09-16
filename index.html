@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Generatore di Mandala</title>
+<style>
+  :root {
+    --bg: #0b0b14;
+    --panel-bg: rgba(20, 20, 32, 0.85);
+    --text: #e8e8f0;
+    --accent: #a78bfa;
+    --border: rgba(255,255,255,0.1);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    cursor: crosshair;
+  }
+  .panel {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    max-width: 640px;
+    margin: 0 auto;
+    background: var(--panel-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+    min-width: 90px;
+  }
+  label {
+    font-size: 11px;
+    opacity: 0.7;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  input[type="range"] {
+    width: 90px;
+    accent-color: var(--accent);
+  }
+  input[type="color"] {
+    width: 36px;
+    height: 28px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    cursor: pointer;
+    padding: 0;
+  }
+  button {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  button:hover { background: rgba(255,255,255,0.16); }
+  button.primary {
+    background: var(--accent);
+    color: #1a1225;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  button.primary:hover { background: #b9a3fc; }
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hint {
+    position: fixed;
+    bottom: 14px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 12px;
+    opacity: 0.4;
+    z-index: 10;
+    pointer-events: none;
+  }
+  @media (max-width: 520px) {
+    .panel { top: 8px; padding: 10px 12px; gap: 10px; }
+    .field { min-width: 70px; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div class="panel">
+  <div class="field">
+    <label for="symmetry">Simmetria</label>
+    <input type="range" id="symmetry" min="2" max="32" value="10" step="1">
+  </div>
+  <div class="field">
+    <label for="brush">Pennello</label>
+    <input type="range" id="brush" min="1" max="20" value="4" step="1">
+  </div>
+  <div class="field">
+    <label for="color">Colore</label>
+    <input type="color" id="color" value="#a78bfa">
+  </div>
+  <div class="field toggle">
+    <label for="rainbow">Arcobaleno</label>
+    <input type="checkbox" id="rainbow">
+  </div>
+  <button id="clear">Pulisci</button>
+  <button id="save" class="primary">Salva PNG</button>
+</div>
+
+<div class="hint">Disegna con il mouse o il dito — il pattern si ripete a specchio attorno al centro</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  const symmetryInput = document.getElementById('symmetry');
+  const brushInput = document.getElementById('brush');
+  const colorInput = document.getElementById('color');
+  const rainbowInput = document.getElementById('rainbow');
+  const clearBtn = document.getElementById('clear');
+  const saveBtn = document.getElementById('save');
+
+  let hue = 0;
+  let drawing = false;
+  let lastX = null, lastY = null;
+  let center = { x: 0, y: 0 };
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    // Preserve drawing by copying old content, scaled to new size.
+    const old = document.createElement('canvas');
+    old.width = canvas.width;
+    old.height = canvas.height;
+    const hadContent = canvas.width > 0 && canvas.height > 0;
+    if (hadContent) old.getContext('2d').drawImage(canvas, 0, 0);
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ctx.fillStyle = '#0b0b14';
+    ctx.fillRect(0, 0, w, h);
+    if (hadContent) {
+      ctx.drawImage(old, 0, 0, old.width, old.height, 0, 0, w, h);
+    }
+    center = { x: w / 2, y: h / 2 };
+  }
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches && e.touches.length) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function currentColor() {
+    if (rainbowInput.checked) {
+      hue = (hue + 2) % 360;
+      return `hsl(${hue}, 85%, 65%)`;
+    }
+    return colorInput.value;
+  }
+
+  function drawSegment(x0, y0, x1, y1) {
+    const n = parseInt(symmetryInput.value, 10);
+    const brush = parseInt(brushInput.value, 10);
+    const color = currentColor();
+
+    ctx.lineWidth = brush;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = brush * 0.8;
+
+    const dx0 = x0 - center.x, dy0 = y0 - center.y;
+    const dx1 = x1 - center.x, dy1 = y1 - center.y;
+    const r0 = Math.hypot(dx0, dy0), a0 = Math.atan2(dy0, dx0);
+    const r1 = Math.hypot(dx1, dy1), a1 = Math.atan2(dy1, dx1);
+
+    const angleStep = (Math.PI * 2) / n;
+
+    for (let i = 0; i < n; i++) {
+      const rot = angleStep * i;
+
+      // Normal copy
+      const p0 = { x: center.x + r0 * Math.cos(a0 + rot), y: center.y + r0 * Math.sin(a0 + rot) };
+      const p1 = { x: center.x + r1 * Math.cos(a1 + rot), y: center.y + r1 * Math.sin(a1 + rot) };
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+
+      // Mirrored copy for extra symmetry
+      const m0 = { x: center.x + r0 * Math.cos(-a0 + rot), y: center.y + r0 * Math.sin(-a0 + rot) };
+      const m1 = { x: center.x + r1 * Math.cos(-a1 + rot), y: center.y + r1 * Math.sin(-a1 + rot) };
+      ctx.beginPath();
+      ctx.moveTo(m0.x, m0.y);
+      ctx.lineTo(m1.x, m1.y);
+      ctx.stroke();
+    }
+
+    ctx.shadowBlur = 0;
+  }
+
+  function startDraw(e) {
+    e.preventDefault();
+    drawing = true;
+    const p = getPos(e);
+    lastX = p.x; lastY = p.y;
+  }
+
+  function moveDraw(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = getPos(e);
+    drawSegment(lastX, lastY, p.x, p.y);
+    lastX = p.x; lastY = p.y;
+  }
+
+  function endDraw(e) {
+    drawing = false;
+    lastX = null; lastY = null;
+  }
+
+  canvas.addEventListener('mousedown', startDraw);
+  canvas.addEventListener('mousemove', moveDraw);
+  window.addEventListener('mouseup', endDraw);
+
+  canvas.addEventListener('touchstart', startDraw, { passive: false });
+  canvas.addEventListener('touchmove', moveDraw, { passive: false });
+  canvas.addEventListener('touchend', endDraw);
+
+  clearBtn.addEventListener('click', () => {
+    const w = window.innerWidth, h = window.innerHeight;
+    ctx.fillStyle = '#0b0b14';
+    ctx.fillRect(0, 0, w, h);
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.download = 'mandala.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
+
+</body>
+</html>
